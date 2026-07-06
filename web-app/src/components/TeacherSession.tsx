@@ -57,6 +57,10 @@ export default function TeacherSession({ onLogout }: Props) {
   const [livenessSummary, setLivenessSummary] = useState<Record<string, { score: number; isLive: boolean }>>({})
   const [rosterList, setRosterList] = useState<PendingRequest[]>([])
   const [previewImageUrl, setPreviewImageUrl] = useState('')
+  const [exportMonth, setExportMonth] = useState(() => {
+    const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [exporting, setExporting] = useState(false)
   const [studentPopup, setStudentPopup] = useState<{ name: string; section: string; time: string; img?: string | null; prompt?: string; detectedDirection?: string } | null>(null)
 
   useEffect(() => { init(); return () => cleanup() }, [])
@@ -209,6 +213,27 @@ export default function TeacherSession({ onLogout }: Props) {
     setTeacherCode(code)
     setIsCodeSaved(true)
     init()
+  }
+
+  async function handleExportExcel() {
+    if (!selectedSection) { alert('Please select a section first'); return }
+    if (!teacherCode) { alert('Teacher code not set — save your code first'); return }
+    setExporting(true)
+    try {
+      const params = new URLSearchParams({ teacherCode, section: selectedSection, month: exportMonth })
+      const res = await fetch(`/api/exportAttendance?${params}`)
+      if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Export failed') }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `Attendance_${selectedSection}_${exportMonth}.xlsx`
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err: any) {
+      alert(err.message || 'Failed to export attendance')
+    } finally {
+      setExporting(false)
+    }
   }
 
   const [sendingEmails, setSendingEmails] = useState<Record<string, 'sending' | 'sent' | 'failed'>>({})
@@ -417,10 +442,12 @@ export default function TeacherSession({ onLogout }: Props) {
             <option value="">All Sections</option>
             {sections.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
-          <a href="https://t.me/rentendancebot" target="_blank" rel="noopener noreferrer"
-             style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: 'var(--green2)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
-            🤖 Get Excel
-          </a>
+          <input type="month" value={exportMonth} onChange={e => setExportMonth(e.target.value)}
+             style={{ marginLeft: 'auto', width: 130, padding: '4px 6px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 11, fontFamily: 'Inter,sans-serif' }} />
+          <button onClick={handleExportExcel} disabled={exporting}
+             style={{ padding: '5px 10px', borderRadius: 8, background: 'var(--green2)', color: '#fff', border: 'none', fontFamily: 'Inter,sans-serif', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', opacity: exporting ? 0.6 : 1 }}>
+            {exporting ? '⏳...' : '📥 Export'}
+          </button>
         </div>
       </div>
 

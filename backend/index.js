@@ -9,6 +9,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '.env') });
 
+import XLSX from 'xlsx';
+
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -279,6 +281,81 @@ app.post('/api/cleanupSessionPhotos', async (req, res) => {
     res.status(500).json({ error: 'Cleanup failed' });
   }
 });
+
+app.get('/api/exportAttendance', async (req, res) => {
+  try {
+    const { teacherCode, section, month } = req.query
+    if (!teacherCode || !section) return res.status(400).json({ error: 'teacherCode and section are required' })
+
+    const { data: teacher } = await supabase
+      .from('teachers')
+      .select('auth_user_id')
+      .eq('teacher_code', teacherCode)
+      .maybeSingle()
+
+    if (!teacher) return res.status(400).json({ error: 'Invalid teacher code' })
+
+    const now = new Date()
+    let year = now.getFullYear(), mon = now.getMonth() + 1
+    if (month) { const p = String(month).split('-'); year = parseInt(p[0]); mon = parseInt(p[1]) }
+
+    const startDate = `${year}-${String(mon).padStart(2, '0')}-01`
+    const endDate = mon === 12 ? `${year + 1}-01-01` : `${year}-${String(mon + 1).padStart(2, '0')}-01`
+
+    const { data: students } = await supabase
+      .from('device_registrations')
+      .select('student_id, student_name')
+      .eq('teacher_id', teacher.auth_user_id)
+      .eq('section', section)
+      .eq('status', 'approved')
+
+    if (!students || students.length === 0) return res.status(400).json({ error: 'No approved students found for this section' })
+
+    const { data: records } = await supabase
+      .from('attendance_records')
+      .select('student_id, scanned_at')
+      .in('student_id', students.map(s => s.student_id))
+      .gte('scanned_at', startDate)
+      .lt('scanned_at', endDate)
+
+    const present = new Set()
+    for (const r of records || []) {
+      const day = new Date(r.scanned_at).getDate()
+      present.add(`${r.student_id}-${day}`)
+    }
+
+    const daysInMonth = new Date(year, mon, 0).getDate()
+    const wb = XLSX.utils.book_new()
+    const header = ['Student', ...Array.from({ length: daysInMonth }, (_, i) => String(i + 1)), 'Total']
+    const wsData = [header]
+
+    for (const s of students) {
+      let count = 0
+      const row = [s.student_name]
+      for (let d = 1; d <= daysInMonth; d++) {
+        const val = present.has(`${s.student_id}-${d}`)
+        if (val) count++
+        row.push(val ? 1 : '')
+      }
+      row.push(count)
+      wsData.push(row)
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData)
+    ws['!cols'] = [{ wch: 25 }, ...Array(daysInMonth).fill({ wch: 5 }), { wch: 8 }]
+    XLSX.utils.book_append_sheet(wb, ws, 'Attendance')
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+    const filename = `Attendance_${section}_${year}-${String(mon).padStart(2, '0')}.xlsx`
+
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.send(buffer)
+  } catch (err) {
+    console.error('Export attendance error:', err)
+    res.status(500).json({ error: 'Failed to export attendance' })
+  }
+})
 
 const frontendDist = path.join(__dirname, '..', 'web-app', 'dist');
 app.use(express.static(frontendDist));
