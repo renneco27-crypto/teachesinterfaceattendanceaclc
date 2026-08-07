@@ -219,17 +219,15 @@ export default function TeacherSession({ onLogout }: Props) {
     if (!selectedSection) { alert('Please select a section first'); return }
     if (!teacherCode) { alert('Teacher code not set — save your code first'); return }
     setExporting(true)
+    const win = window.open('', '_blank')
     try {
       const params = new URLSearchParams({ teacherCode, section: selectedSection, month: exportMonth })
-      const res = await fetch(`/api/exportAttendance?${params}`)
+      const url = `/api/exportAttendance?${params}`
+      const res = await fetch(url)
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Export failed') }
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = `Attendance_${selectedSection}_${exportMonth}.xlsx`
-      document.body.appendChild(a); a.click(); document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      if (win) { win.location.href = url } else { window.location.href = url }
     } catch (err: any) {
+      if (win) win.close()
       alert(err.message || 'Failed to export attendance')
     } finally {
       setExporting(false)

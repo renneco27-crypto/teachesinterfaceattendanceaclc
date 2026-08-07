@@ -348,7 +348,7 @@ app.get('/api/exportAttendance', async (req, res) => {
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
     const filename = `Attendance_${section}_${year}-${String(mon).padStart(2, '0')}.xlsx`
 
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`)
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.send(buffer)
   } catch (err) {
