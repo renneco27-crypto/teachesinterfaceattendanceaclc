@@ -7,7 +7,7 @@ interface Props {
   onBack: () => void
 }
 
-type PinPhase = 'entry' | 'checking' | 'pending' | 'notfound'
+type PinPhase = 'entry' | 'checking' | 'pending' | 'revoked' | 'notfound'
 
 export default function PINGate({ onSuccess, onBack }: Props) {
   const [pin, setPin] = useState('')
@@ -44,7 +44,7 @@ export default function PINGate({ onSuccess, onBack }: Props) {
         onSuccess(entered)
         return
       }
-      setPhase('pending')
+      setPhase(row.status === 'revoked' ? 'revoked' : 'pending')
     } else {
       setPhase('notfound')
     }
@@ -116,6 +116,17 @@ export default function PINGate({ onSuccess, onBack }: Props) {
             <div className="reg-icon">⏳</div>
             <h3>Waiting for Approval</h3>
             <p>{studentName}, your device registration is pending teacher approval.</p>
+            <button className="btn-primary mt24" onClick={onBack}>Back to Home</button>
+          </div>
+        </div>
+      )}
+
+      {phase === 'revoked' && (
+        <div className="reg-card">
+          <div className="reg-result">
+            <div className="reg-icon">🚫</div>
+            <h3>Device Revoked</h3>
+            <p>{studentName}, this device has been revoked by your teacher. Contact them to re-register.</p>
             <button className="btn-primary mt24" onClick={onBack}>Back to Home</button>
           </div>
         </div>

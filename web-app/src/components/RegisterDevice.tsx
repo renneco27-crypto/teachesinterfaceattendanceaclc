@@ -4,12 +4,11 @@ import { generateAndStoreKeyPair, getPublicKeyBase64, getPublicKeyFingerprint, h
 
 interface Props {
   onBack: () => void
-  onRegistered: (pin: string) => void
 }
 
 type Phase = 'form' | 'submitting' | 'success' | 'failed'
 
-export default function RegisterDevice({ onBack, onRegistered }: Props) {
+export default function RegisterDevice({ onBack }: Props) {
   const [teacherCode, setTeacherCode] = useState('')
   const [name, setName] = useState('')
   const [pin, setPin] = useState('')
@@ -99,7 +98,7 @@ export default function RegisterDevice({ onBack, onRegistered }: Props) {
           setPhase('failed'); return
         }
         setMessage('Device registered! You can now scan attendance.')
-        setPhase('success'); onRegistered(pin); return
+        setPhase('success'); return
       }
 
       const isReplacement = existingRow !== null && existingRow.status !== 'pending'
@@ -128,7 +127,6 @@ export default function RegisterDevice({ onBack, onRegistered }: Props) {
 
       setMessage(isReplacement ? 'Device replacement requested! Your previous device will be turned off once your teacher approves this one.' : 'Device registered! You can now scan attendance.')
       setPhase('success')
-      onRegistered(pin)
     } catch (err: any) {
       setErrorMsg('Error: ' + (err?.message || 'Unknown error'))
       setPhase('failed')

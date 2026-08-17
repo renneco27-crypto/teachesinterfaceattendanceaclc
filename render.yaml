@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: aclc-attendance
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: ./scripts/render-build.sh
+    startCommand: node backend/index.js
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_ACCESS_TOKEN
+        sync: false
+      - key: SUPABASE_PROJECT_REF
+        value: nstyqceyjkgevnibfqks
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_BOT_URL
+        sync: false
+      - key: VITE_EMAILJS_1_PUBLIC_KEY
+        sync: false
+      - key: VITE_EMAILJS_1_SERVICE_ID
+        sync: false
+      - key: VITE_EMAILJS_1_TEMPLATE_ID
+        sync: false
+      - key: VITE_EMAILJS_2_PUBLIC_KEY
+        sync: false
+      - key: VITE_EMAILJS_2_SERVICE_ID
+        sync: false
+      - key: VITE_EMAILJS_2_TEMPLATE_ID
+        sync: false
+      - key: VITE_EMAILJS_3_PUBLIC_KEY
+        sync: false
+      - key: VITE_EMAILJS_3_SERVICE_ID
+        sync: false
+      - key: VITE_EMAILJS_3_TEMPLATE_ID
+        sync: false

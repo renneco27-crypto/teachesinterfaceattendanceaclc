@@ -8,6 +8,7 @@ build/
 *.db-shm
 *.db-wal
 .env
+.env.env
 .DS_Store
 *.log
 .vscode/
