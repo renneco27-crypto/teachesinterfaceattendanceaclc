@@ -62,6 +62,9 @@ export default function TeacherSession({ onLogout }: Props) {
   })
   const [exporting, setExporting] = useState(false)
   const [studentPopup, setStudentPopup] = useState<{ name: string; section: string; time: string; img?: string | null; prompt?: string; detectedDirection?: string } | null>(null)
+  const [pingState, setPingState] = useState<{ active: boolean; endsAt: string; radius: number; pinging: boolean } | null>(null)
+  const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [pingCountdown, setPingCountdown] = useState(0)
 
   useEffect(() => { init(); return () => cleanup() }, [])
 
@@ -83,6 +86,7 @@ export default function TeacherSession({ onLogout }: Props) {
   function cleanup() {
     if (rotationTimer.current) clearInterval(rotationTimer.current)
     if (channelRef.current) channelRef.current.unsubscribe()
+    if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null }
   }
 
   async function init() {
@@ -256,6 +260,53 @@ export default function TeacherSession({ onLogout }: Props) {
     if (ok) setAttendees(prev => prev.filter(a => a.id !== attendanceRecordId))
   }
 
+  function stopPingCountdown() {
+    if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null }
+    setPingCountdown(0)
+    setPingState(prev => prev ? { ...prev, active: false } : null)
+  }
+
+  async function handleStartPing() {
+    const sid = sessionIdRef.current
+    if (!sid) return
+    setPingState({ active: false, endsAt: '', radius: 0, pinging: true })
+
+    let pos: GeolocationPosition
+    try {
+      pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('Location unavailable')); return }
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 })
+      })
+    } catch {
+      setPingState(null)
+      alert('Could not get your location. Enable GPS and try again.')
+      return
+    }
+
+    const lat = pos.coords.latitude, lng = pos.coords.longitude
+    try {
+      const resp = await fetch('/api/startPing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: sid, teacherId: teacherIdRef.current || teacherId, lat, lng })
+      })
+      const data = await resp.json()
+      if (!resp.ok) throw new Error(data.error || 'Failed to start ping')
+      setPingState({ active: true, endsAt: data.expiresAt, radius: data.radius, pinging: false })
+      setPingCountdown(120)
+      if (pingTimerRef.current) clearInterval(pingTimerRef.current)
+      pingTimerRef.current = setInterval(() => {
+        setPingCountdown(prev => {
+          if (prev <= 1) { stopPingCountdown(); return 0 }
+          return prev - 1
+        })
+      }, 1000)
+    } catch (e: any) {
+      setPingState(null)
+      alert(e.message || 'Failed to start ping')
+    }
+  }
+
   function selectChip(name: string) {
     setSelectedChip(name)
     setClassName(name)
@@ -355,6 +406,7 @@ export default function TeacherSession({ onLogout }: Props) {
     if (!sid) return
     if (rotationTimer.current) { clearInterval(rotationTimer.current); rotationTimer.current = null }
     if (channelRef.current) { channelRef.current.unsubscribe(); channelRef.current = null }
+    stopPingCountdown()
     setQrDataUrl('')
     try { await fetch('/api/cleanupSessionPhotos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sid }) }) } catch {}
     await endSession(sid)
@@ -367,6 +419,7 @@ export default function TeacherSession({ onLogout }: Props) {
     const sid = sessionIdRef.current
     if (rotationTimer.current) { clearInterval(rotationTimer.current); rotationTimer.current = null }
     if (channelRef.current) { channelRef.current.unsubscribe(); channelRef.current = null }
+    stopPingCountdown()
     if (sid) { try { await fetch('/api/cleanupSessionPhotos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sid }) }) } catch {} }
     sessionIdRef.current = null
     setSessionId(null)
@@ -499,6 +552,32 @@ export default function TeacherSession({ onLogout }: Props) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div className="qr-hint">Refreshes every 1s</div>
               </div>
+            </div>
+
+            <div className="ping-card">
+              {!pingState?.active && (
+                <>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>📍 Proximity Ping</div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
+                    Auto-mark students within {pingState?.radius || 40}m who are registered to you. Runs for 2 minutes.
+                  </div>
+                  <button className="btn-primary" onClick={handleStartPing} disabled={!!pingState?.pinging} style={{ opacity: pingState?.pinging ? 0.6 : 1, width: '100%' }}>
+                    {pingState?.pinging ? 'Locating you…' : '📍 Ping Location'}
+                  </button>
+                </>
+              )}
+              {pingState?.active && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--green2)' }}>📍 Ping Active</div>
+                    <div style={{ background: 'var(--green2)', color: '#fff', fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 20, letterSpacing: '.1em' }}>{Math.floor(pingCountdown / 60)}:{String(pingCountdown % 60).padStart(2, '0')}</div>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
+                    Auto-marking students within {pingState.radius}m of your location. Students need their app open.
+                  </div>
+                  <button className="btn-white-ghost" onClick={stopPingCountdown} style={{ width: '100%', borderRadius: 10 }}>■ Stop Ping</button>
+                </>
+              )}
             </div>
 
             {qrFullscreen && (

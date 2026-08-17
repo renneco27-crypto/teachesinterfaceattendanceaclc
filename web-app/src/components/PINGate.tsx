@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { supabase } from '../services/supabase'
-import { getDeviceId } from '../utils/device'
+import { getPublicKeyFingerprint } from '../utils/cryptoIdentity'
 
 interface Props {
   onSuccess: (pin: string) => void
@@ -29,7 +29,7 @@ export default function PINGate({ onSuccess, onBack }: Props) {
   }
 
   async function verifyPin(entered: string) {
-    const deviceId = getDeviceId()
+    const deviceId = await getPublicKeyFingerprint()
     const { data } = await supabase()
       .from('device_registrations')
       .select('status, student_name')

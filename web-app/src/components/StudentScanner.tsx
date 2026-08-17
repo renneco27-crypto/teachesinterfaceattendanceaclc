@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Html5Qrcode } from 'html5-qrcode'
 import { supabase } from '../services/supabase'
-import { getDeviceId } from '../utils/device'
+import { getPublicKeyFingerprint } from '../utils/cryptoIdentity'
 import { checkMockLocation } from '../utils/mockLocation'
 import { checkDeveloperOptions } from '../utils/developerOptions'
 import { sendParentEmail } from '../utils/emailNotification'
@@ -12,17 +12,10 @@ interface Props {
   pinValue: string
 }
 
-type ScanPhase = 'idle' | 'scanning' | 'liveness' | 'success' | 'fail' | 'geo-fail' | 'mock-fail' | 'devopts-fail' | 'liveness-timeout'
+type ScanPhase = 'idle' | 'scanning' | 'liveness' | 'success' | 'fail' | 'mock-fail' | 'devopts-fail' | 'liveness-timeout'
 
 const SCANNER_ID = 'qr-scanner'
 const CAPTURE_WINDOW_MS = 10000
-
-function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371000, toR = Math.PI / 180
-  const dLat = (lat2 - lat1) * toR, dLng = (lng2 - lng1) * toR
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * toR) * Math.cos(lat2 * toR) * Math.sin(dLng / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-}
 
 interface QrPayload {
   session_id: string
@@ -34,7 +27,6 @@ const BACKEND_URL = '' // relative, same origin
 export default function StudentScanner({ onBack, pinValue }: Props) {
   const [scanPhase, setScanPhase] = useState<ScanPhase>('idle')
   const [errorMsg, setErrorMsg] = useState('')
-  const [geoText, setGeoText] = useState('Checking location…')
   const [capturedCount, setCapturedCount] = useState(0)
   const [livenessPrompt, setLivenessPrompt] = useState('')
   const [livenessScore, setLivenessScore] = useState(0)
@@ -76,32 +68,6 @@ export default function StudentScanner({ onBack, pinValue }: Props) {
   useEffect(() => {
     if (scanPhase === 'liveness') startLivenessCapture()
   }, [scanPhase])
-
-  async function checkGeo() {
-    const { data: locEnabled } = await supabase()
-      .from('settings').select('value').eq('key', 'locationEnabled').maybeSingle()
-    if (locEnabled?.value === 'false') { setGeoText('📍 Location check disabled'); return }
-
-    const { data: lat } = await supabase()
-      .from('settings').select('value').eq('key', 'campusLat').maybeSingle()
-    const { data: lng } = await supabase()
-      .from('settings').select('value').eq('key', 'campusLng').maybeSingle()
-    const { data: radius } = await supabase()
-      .from('settings').select('value').eq('key', 'campusRadius').maybeSingle()
-    const campusLat = lat?.value, campusLng = lng?.value, maxDist = radius?.value
-    if (!campusLat || !campusLng || !maxDist) { setGeoText('📍 Location not configured'); return }
-
-    if (!navigator.geolocation) { setGeoText('⚠️ Could not verify location'); return }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const dist = haversine(pos.coords.latitude, pos.coords.longitude, parseFloat(campusLat), parseFloat(campusLng))
-        if (dist <= parseInt(maxDist)) setGeoText(`📍 On campus (${Math.round(dist)}m from gate)`)
-        else { setGeoText(`❌ You are ${Math.round(dist)}m off campus`); setTimeout(() => setScanPhase('geo-fail'), 800) }
-      },
-      () => setGeoText('⚠️ Could not verify location'),
-      { enableHighAccuracy: true, timeout: 8000 }
-    )
-  }
 
   async function startScan() {
     finishingRef.current = false
@@ -206,7 +172,11 @@ export default function StudentScanner({ onBack, pinValue }: Props) {
       setScanPhase('fail'); return
     }
 
-    const deviceId = getDeviceId()
+    const deviceId = await getPublicKeyFingerprint()
+    if (!deviceId) {
+      setErrorMsg('Device identity missing. Re-register your device.')
+      setScanPhase('fail'); return
+    }
     const { data: devReg, error: devErr } = await supabase()
       .from('device_registrations')
       .select('id, student_id, student_name, status, pin, section')
@@ -417,7 +387,6 @@ export default function StudentScanner({ onBack, pinValue }: Props) {
     setModelLoading(false)
     setScanPhase('idle')
     gestureConfirmed = false
-    checkGeo()
   }
 
   return (
@@ -431,7 +400,6 @@ export default function StudentScanner({ onBack, pinValue }: Props) {
       </div>
       {scanPhase === 'idle' && (
         <div className="scanner-body">
-          <div className="geo-check"><span>{geoText}</span></div>
           <div className="qr-viewport">
             <div className="qr-br" />
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
@@ -516,18 +484,6 @@ export default function StudentScanner({ onBack, pinValue }: Props) {
           <div className="result-sub">Did not follow instructions. Please try again.</div>
           <div className="scanner-btns">
             <button className="btn-white" onClick={resetScanner}>Try Again</button>
-            <button className="btn-white-ghost" onClick={onBack}>Back</button>
-          </div>
-        </div>
-      )}
-
-      {scanPhase === 'geo-fail' && (
-        <div className="scanner-body">
-          <div className="result-icon fail">📍</div>
-          <div className="result-title">Outside Campus</div>
-          <div className="result-sub">You must be on ACLC Ormoc campus to scan attendance.</div>
-          <div className="scanner-btns">
-            <button className="btn-white" onClick={resetScanner}>Retry Location</button>
             <button className="btn-white-ghost" onClick={onBack}>Back</button>
           </div>
         </div>

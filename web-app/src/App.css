@@ -327,6 +327,12 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--sub); te
 .qr-hint { font-size: 11px; color: var(--muted); font-weight: 600; }
 .qr-seconds { font-size: 22px; font-weight: 800; color: var(--green2); font-family: 'Sora', 'Inter', sans-serif; }
 
+/* Proximity ping */
+.ping-card {
+  background: var(--card); border-radius: 18px; padding: 20px; margin-bottom: 16px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+
 /* Attendance table */
 .att-table-card { background: var(--card); border-radius: 18px; overflow: hidden; margin-bottom: 16px; }
 .att-table-head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }

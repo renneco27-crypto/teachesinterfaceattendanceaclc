@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '../services/supabase'
-import { getDeviceId } from '../utils/device'
+import { generateAndStoreKeyPair, getPublicKeyBase64, getPublicKeyFingerprint, hasKeyPair } from '../utils/cryptoIdentity'
 
 interface Props {
   onBack: () => void
@@ -34,7 +34,20 @@ export default function RegisterDevice({ onBack, onRegistered }: Props) {
     if (!section) { setErrorMsg('Please select your section.'); setPhase('failed'); return }
     if (parentEmail && !parentEmail.includes('@')) { setErrorMsg('Please enter a valid parent email.'); setPhase('failed'); return }
     setPhase('submitting')
-    const deviceId = getDeviceId()
+    let deviceIdentifier = ''
+    let publicKeyBase64 = ''
+    try {
+      if (!(await hasKeyPair())) await generateAndStoreKeyPair()
+      deviceIdentifier = (await getPublicKeyFingerprint()) ?? ''
+      publicKeyBase64 = (await getPublicKeyBase64()) ?? ''
+    } catch {
+      setErrorMsg('Could not create a device identity. Make sure your browser supports Web Crypto.')
+      setPhase('failed'); return
+    }
+    if (!deviceIdentifier || !publicKeyBase64) {
+      setErrorMsg('Could not create a device identity. Try again.')
+      setPhase('failed'); return
+    }
 
     try {
       const { data: teacher } = await supabase()
@@ -63,7 +76,7 @@ export default function RegisterDevice({ onBack, onRegistered }: Props) {
         if (row.status === 'pending') {
             const { error: upErr } = await supabase()
               .from('device_registrations')
-              .update({ device_identifier: deviceId, pin, section, parent_email: parentEmail, parent_name: parentName })
+              .update({ device_identifier: deviceIdentifier, public_key: publicKeyBase64, pin, section, parent_email: parentEmail, parent_name: parentName })
               .eq('id', row.id)
           if (upErr) {
             if (upErr.message?.includes('idx_device_registrations_uniq')) {
@@ -84,7 +97,8 @@ export default function RegisterDevice({ onBack, onRegistered }: Props) {
         .from('device_registrations')
         .insert({
           student_name: name.trim(),
-          device_identifier: deviceId,
+          device_identifier: deviceIdentifier,
+          public_key: publicKeyBase64,
           pin,
           section,
           teacher_id: teacherId,

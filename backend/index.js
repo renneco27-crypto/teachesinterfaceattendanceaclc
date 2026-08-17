@@ -357,6 +357,135 @@ app.get('/api/exportAttendance', async (req, res) => {
   }
 })
 
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371000, toR = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toR, dLng = (lng2 - lng1) * toR;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * toR) * Math.cos(lat2 * toR) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+app.post('/api/startPing', async (req, res) => {
+  try {
+    const { sessionId, teacherId, lat, lng } = req.body;
+    if (!sessionId || !teacherId || typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'sessionId, teacherId, lat, lng are required' });
+    }
+
+    const { data: session, error: sessErr } = await supabase
+      .from('attendance_sessions')
+      .select('teacher_id')
+      .eq('id', sessionId)
+      .single();
+    if (sessErr || !session) return res.status(404).json({ error: 'Session not found' });
+    if (session.teacher_id !== teacherId) return res.status(403).json({ error: 'Session does not belong to this teacher' });
+
+    const { data: radiusSetting } = await supabase
+      .from('settings').select('value').eq('key', 'pingRadius').maybeSingle();
+    const radiusM = parseInt(radiusSetting?.value || '40', 10) || 40;
+
+    const startedAt = new Date();
+    const expiresAt = new Date(Date.now() + 2 * 60000);
+
+    const { data: ping, error: insErr } = await supabase
+      .from('location_pings')
+      .insert({
+        teacher_id: teacherId,
+        session_id: sessionId,
+        lat,
+        lng,
+        radius_m: radiusM,
+        started_at: startedAt.toISOString(),
+        expires_at: expiresAt.toISOString(),
+        is_active: true
+      })
+      .select('id')
+      .single();
+
+    if (insErr) {
+      console.error('Start ping error:', insErr);
+      return res.status(500).json({ error: 'Failed to start ping' });
+    }
+
+    res.json({ pingId: ping.id, radius: radiusM, expiresAt: expiresAt.toISOString() });
+  } catch (err) {
+    console.error('Start ping exception:', err);
+    res.status(500).json({ error: 'Failed to start ping' });
+  }
+});
+
+app.post('/api/locationReport', async (req, res) => {
+  try {
+    const { deviceId, lat, lng } = req.body;
+    if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'deviceId, lat, lng are required' });
+    }
+
+    const { data: reg, error: regErr } = await supabase
+      .from('device_registrations')
+      .select('student_id, student_name, section, teacher_id, status')
+      .eq('device_identifier', deviceId)
+      .eq('status', 'approved')
+      .maybeSingle();
+
+    if (regErr || !reg) {
+      return res.json({ marked: false, reason: 'unregistered' });
+    }
+
+    const now = new Date().toISOString();
+    const { data: ping, error: pingErr } = await supabase
+      .from('location_pings')
+      .select('id, session_id, lat, lng, radius_m')
+      .eq('teacher_id', reg.teacher_id)
+      .eq('is_active', true)
+      .lte('started_at', now)
+      .gte('expires_at', now)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (pingErr || !ping) {
+      return res.json({ marked: false, reason: 'no_active_ping' });
+    }
+
+    const dist = haversine(lat, lng, ping.lat, ping.lng);
+    if (dist > ping.radius_m) {
+      return res.json({ marked: false, reason: 'out_of_range', distance: Math.round(dist) });
+    }
+
+    const { data: existing } = await supabase
+      .from('attendance_records')
+      .select('id')
+      .eq('session_id', ping.session_id)
+      .eq('student_id', reg.student_id)
+      .maybeSingle();
+
+    if (existing) {
+      return res.json({ marked: true, studentName: reg.student_name, already: true });
+    }
+
+    const { error: attErr } = await supabase
+      .from('attendance_records')
+      .insert({
+        session_id: ping.session_id,
+        student_id: reg.student_id,
+        student_name: reg.student_name,
+        section: reg.section || '',
+        is_mock_location: false
+      });
+
+    if (attErr) {
+      console.error('Location report attendance insert error:', attErr);
+      return res.status(500).json({ error: 'Failed to record attendance' });
+    }
+
+    res.json({ marked: true, studentName: reg.student_name, distance: Math.round(dist) });
+  } catch (err) {
+    console.error('Location report exception:', err);
+    res.status(500).json({ error: 'Failed to process location report' });
+  }
+});
+
 const frontendDist = path.join(__dirname, '..', 'web-app', 'dist');
 app.use(express.static(frontendDist));
 
