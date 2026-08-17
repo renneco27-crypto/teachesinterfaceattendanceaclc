@@ -37,3 +37,11 @@ policy = "per_worker"
   [functions.kick-from-session]
   enabled = true
   verify_jwt = true
+
+  [functions.submit-ble-attendance]
+  enabled = true
+  verify_jwt = false
+
+  [functions.approve-device]
+  enabled = true
+  verify_jwt = true

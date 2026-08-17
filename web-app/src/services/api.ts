@@ -58,6 +58,40 @@ export async function revokeDevice(deviceRegistrationId: string): Promise<boolea
   return !error
 }
 
+export async function approveDevice(deviceRegistrationId: string): Promise<boolean> {
+  const { error } = await supabase().functions.invoke('approve-device', {
+    body: { device_registration_id: deviceRegistrationId },
+  })
+  return !error
+}
+
+export async function markAttendanceManual(body: {
+  sessionId: string
+  studentId: string
+  studentName: string
+  section?: string
+}): Promise<{ success: boolean; status?: string; error?: string }> {
+  const { data, error } = await supabase().functions.invoke('submit-ble-attendance', {
+    body: {
+      method: 'manual',
+      sessionId: body.sessionId,
+      studentId: body.studentId,
+      studentName: body.studentName,
+      section: body.section || '',
+    },
+  })
+
+  if (error) {
+    return { success: false, error: error.message || 'SERVER_ERROR' }
+  }
+
+  if (data?.error) {
+    return { success: false, error: data.error }
+  }
+
+  return { success: true, status: data?.status || 'recorded' }
+}
+
 export async function kickFromSession(attendanceRecordId: string): Promise<boolean> {
   const { error } = await supabase().functions.invoke('kick-from-session', {
     body: { attendance_record_id: attendanceRecordId },

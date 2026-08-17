@@ -76,6 +76,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(android.os.Bundle savedInstanceState) {
+        registerPlugin(BleAttendancePlugin.class);
         super.onCreate(savedInstanceState);
 
         getBridge().getWebView().addJavascriptInterface(new NativeBridge(), "nativeBridge");

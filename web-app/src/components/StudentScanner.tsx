@@ -6,9 +6,11 @@ import { checkMockLocation } from '../utils/mockLocation'
 import { checkDeveloperOptions } from '../utils/developerOptions'
 import { sendParentEmail } from '../utils/emailNotification'
 import { LivenessChecker } from '../utils/liveness-detector'
+import { isBleAvailable } from '../utils/bleManager'
 
 interface Props {
   onBack: () => void
+  onBle: () => void
   pinValue: string
 }
 
@@ -24,7 +26,7 @@ interface QrPayload {
 
 const BACKEND_URL = '' // relative, same origin
 
-export default function StudentScanner({ onBack, pinValue }: Props) {
+export default function StudentScanner({ onBack, onBle, pinValue }: Props) {
   const [scanPhase, setScanPhase] = useState<ScanPhase>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [capturedCount, setCapturedCount] = useState(0)
@@ -411,6 +413,11 @@ export default function StudentScanner({ onBack, pinValue }: Props) {
             <button className="btn-white" onClick={startScan}>▶ Start Camera</button>
             <button className="btn-white-ghost" onClick={onBack}>Cancel</button>
           </div>
+          {isBleAvailable() && (
+            <div style={{ marginTop: 14 }}>
+              <button className="btn-white-ghost" onClick={onBle} style={{ width: '100%' }}>📶 BLE Attendance</button>
+            </div>
+          )}
         </div>
       )}
 

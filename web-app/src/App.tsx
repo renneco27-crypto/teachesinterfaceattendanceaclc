@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react'
 import HomeScreen from './components/HomeScreen'
 import PINGate from './components/PINGate'
 import StudentScanner from './components/StudentScanner'
+import StudentBLE from './components/StudentBLE'
 import TeacherLogin from './components/TeacherLogin'
 import TeacherSession from './components/TeacherSession'
 
 import { supabase } from './services/supabase'
 import './App.css'
 
-type Phase = 'home' | 'pin' | 'scanner' | 'teacher-login' | 'teacher'
+type Phase = 'home' | 'pin' | 'scanner' | 'ble' | 'teacher-login' | 'teacher'
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('home')
@@ -36,7 +37,10 @@ export default function App() {
         <PINGate key={navCount} onSuccess={(pin) => { setPinValue(pin); setPhase('scanner') }} onBack={() => go('home')} />
       </div>
       <div className={`screen ${phase === 'scanner' ? 'active' : ''}`} id="scanner">
-        <StudentScanner key={navCount} onBack={() => go('home')} pinValue={pinValue} />
+        <StudentScanner key={navCount} onBack={() => go('home')} onBle={() => go('ble')} pinValue={pinValue} />
+      </div>
+      <div className={`screen ${phase === 'ble' ? 'active' : ''}`} id="ble">
+        <StudentBLE key={navCount} onBack={() => go('home')} pinValue={pinValue} />
       </div>
       <div className={`screen ${phase === 'teacher-login' ? 'active' : ''}`} id="teacher-login">
         <TeacherLogin onLogin={() => go('teacher')} onBack={() => go('home')} />

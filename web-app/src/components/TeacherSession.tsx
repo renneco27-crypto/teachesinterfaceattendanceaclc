@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import QRCode from 'qrcode'
 import { supabase } from '../services/supabase'
-import { createSession, endSession, rotateSessionKey, revokeDevice, kickFromSession } from '../services/api'
+import { createSession, endSession, rotateSessionKey, revokeDevice, kickFromSession, approveDevice, markAttendanceManual } from '../services/api'
 import MonthlyAttendance from './MonthlyAttendance'
 import { sendParentEmail } from '../utils/emailNotification'
+import { startTeacherScan, stopTeacherScan, restartTeacherScan } from '../utils/bleManager'
+import type { BleRosterEntry, BleStatus } from '../utils/bleManager'
+import { syncPendingRecords, getPendingRecords } from '../utils/offlineAttendance'
 
 interface Props {
   onLogout: () => void
@@ -66,6 +69,19 @@ export default function TeacherSession({ onLogout }: Props) {
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [pingCountdown, setPingCountdown] = useState(0)
 
+  const [bleScanning, setBleScanning] = useState(false)
+  const bleRosterRef = useRef<BleRosterEntry[]>([])
+  const [bleRoster, setBleRoster] = useState<BleRosterEntry[]>([])
+  const [bleManualList, setBleManualList] = useState<Array<{ studentId: string; studentName: string; section?: string }>>([])
+  const [bleStatuses, setBleStatuses] = useState<Array<{ name?: string; section?: string; text: string; at: string; kind: 'ok' | 'err' }>>([])
+  const [bleCountdown, setBleCountdown] = useState(0)
+  const bleCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [bleQueueCount, setBleQueueCount] = useState(0)
+  const [bleError, setBleError] = useState('')
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [manualStudentId, setManualStudentId] = useState('')
+  const [manualMarking, setManualMarking] = useState(false)
+
   useEffect(() => { init(); return () => cleanup() }, [])
 
   useEffect(() => {
@@ -87,7 +103,21 @@ export default function TeacherSession({ onLogout }: Props) {
     if (rotationTimer.current) clearInterval(rotationTimer.current)
     if (channelRef.current) channelRef.current.unsubscribe()
     if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null }
+    if (bleCountdownRef.current) { clearInterval(bleCountdownRef.current); bleCountdownRef.current = null }
+    stopTeacherScan().catch(() => {})
   }
+
+  useEffect(() => {
+    const onFocus = () => refreshBleQueue()
+    const onOnline = () => syncNow()
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('online', onOnline)
+    refreshBleQueue()
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [])
 
   async function init() {
     try {
@@ -183,11 +213,8 @@ export default function TeacherSession({ onLogout }: Props) {
   }
 
   async function handleApprove(requestId: string) {
-    const { error } = await supabase()
-      .from('device_registrations')
-      .update({ status: 'approved' })
-      .eq('id', requestId)
-    if (!error) fetchPending()
+    const ok = await approveDevice(requestId)
+    if (ok) fetchPending()
   }
 
   async function handleReject(requestId: string) {
@@ -258,6 +285,123 @@ export default function TeacherSession({ onLogout }: Props) {
   async function handleKick(attendanceRecordId: string) {
     const ok = await kickFromSession(attendanceRecordId)
     if (ok) setAttendees(prev => prev.filter(a => a.id !== attendanceRecordId))
+  }
+
+  async function loadBleRoster() {
+    const uid = teacherIdRef.current
+    if (!uid) return
+    const { data } = await supabase()
+      .from('device_registrations')
+      .select('id, student_id, student_name, section, device_identifier, public_key')
+      .eq('teacher_id', uid)
+      .eq('status', 'approved')
+      .neq('device_identifier', '')
+      .order('student_name', { ascending: true })
+    if (!data) return
+    const scan = data
+      .filter(r => r.public_key)
+      .map(r => ({
+        studentId: r.student_id,
+        studentName: r.student_name,
+        deviceIdentifier: r.device_identifier,
+        publicKey: r.public_key || '',
+        section: r.section || undefined,
+      }))
+    bleRosterRef.current = scan
+    setBleRoster(scan)
+    setBleManualList(data.map(r => ({ studentId: r.student_id, studentName: r.student_name, section: r.section || undefined })))
+  }
+
+  interface BleStatusEntry {
+  name?: string
+  section?: string
+  text: string
+  at: string
+  kind: 'ok' | 'err'
+}
+
+function pushBleStatus(entry: BleStatusEntry) {
+  setBleStatuses(prev => [...prev, entry].slice(-80))
+}
+
+function appendBleStatus(st: BleStatus) {
+  if (st.status === 'verified') {
+    pushBleStatus({ name: st.studentName, section: st.section, text: 'Verified ✓', at: new Date().toLocaleTimeString(), kind: 'ok' })
+  } else if (st.status === 'verifying') {
+    pushBleStatus({ name: st.studentName, section: st.section, text: 'Verifying…', at: new Date().toLocaleTimeString(), kind: 'ok' })
+  } else if (st.status === 'rejected') {
+    pushBleStatus({ name: st.studentName || st.address, section: st.section, text: st.message === 'replay' ? 'Replay blocked' : 'Signature rejected', at: new Date().toLocaleTimeString(), kind: 'err' })
+  } else if (st.status === 'error') {
+    pushBleStatus({ name: st.studentName || st.address || 'BLE', text: st.message || 'Error', at: new Date().toLocaleTimeString(), kind: 'err' })
+  } else if (st.message === 'unknown-device') {
+    pushBleStatus({ name: 'Unknown device', text: 'No roster match', at: new Date().toLocaleTimeString(), kind: 'err' })
+  }
+}
+
+  async function startBleScan() {
+    const sid = sessionIdRef.current
+    if (!sid) return
+    setBleError('')
+    await loadBleRoster()
+    if (bleRosterRef.current.length === 0) {
+      setBleError('No approved students with BLE identities yet. Approve registrations first.')
+      return
+    }
+    setBleStatuses([])
+    setBleScanning(true)
+    setBleCountdown(30)
+    if (bleCountdownRef.current) clearInterval(bleCountdownRef.current)
+    bleCountdownRef.current = setInterval(() => {
+      setBleCountdown(prev => {
+        if (prev <= 1) {
+          restartTeacherScan().catch(() => {})
+          return 30
+        }
+        return prev - 1
+      })
+    }, 1000)
+    const challenge = new Uint8Array(32)
+    crypto.getRandomValues(challenge)
+    await startTeacherScan({ sessionId: sid, challengeBytes: challenge, roster: bleRosterRef.current, onStatus: appendBleStatus })
+  }
+
+  function stopBleScan() {
+    if (bleCountdownRef.current) { clearInterval(bleCountdownRef.current); bleCountdownRef.current = null }
+    stopTeacherScan().catch(() => {})
+    setBleScanning(false)
+    setBleCountdown(0)
+  }
+
+  async function refreshBleQueue() {
+    try {
+      const recs = await getPendingRecords()
+      setBleQueueCount(recs.filter(r => !r.synced).length)
+    } catch {}
+  }
+
+  async function syncNow() {
+    setSyncBusy(true)
+    try {
+      await syncPendingRecords()
+    } catch {}
+    await refreshBleQueue()
+    setSyncBusy(false)
+  }
+
+  async function handleManualMark() {
+    const sid = sessionIdRef.current
+    if (!sid || !manualStudentId) return
+    const entry = bleManualList.find(s => s.studentId === manualStudentId)
+    if (!entry) { setManualStudentId(''); return }
+    setManualMarking(true)
+    setBleError('')
+    try {
+      const res = await markAttendanceManual({ sessionId: sid, studentId: entry.studentId, studentName: entry.studentName, section: entry.section })
+      if (!res.success) setBleError(res.error || 'Manual mark failed.')
+      else { setManualStudentId(''); pushBleStatus({ name: entry.studentName, section: entry.section, text: 'Marked manually ✓', at: new Date().toLocaleTimeString(), kind: 'ok' }) }
+    } finally {
+      setManualMarking(false)
+    }
   }
 
   function stopPingCountdown() {
@@ -343,6 +487,7 @@ export default function TeacherSession({ onLogout }: Props) {
     setSessionId(id)
     setPhase('active')
     fetchPastClasses()
+    loadBleRoster()
     renderQr(JSON.stringify({ session_id: id, rotation_key }))
 
     const channel = supabase().channel(`attendance_records:${id}`)
@@ -407,6 +552,7 @@ export default function TeacherSession({ onLogout }: Props) {
     if (rotationTimer.current) { clearInterval(rotationTimer.current); rotationTimer.current = null }
     if (channelRef.current) { channelRef.current.unsubscribe(); channelRef.current = null }
     stopPingCountdown()
+    stopBleScan()
     setQrDataUrl('')
     try { await fetch('/api/cleanupSessionPhotos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sid }) }) } catch {}
     await endSession(sid)
@@ -420,6 +566,7 @@ export default function TeacherSession({ onLogout }: Props) {
     if (rotationTimer.current) { clearInterval(rotationTimer.current); rotationTimer.current = null }
     if (channelRef.current) { channelRef.current.unsubscribe(); channelRef.current = null }
     stopPingCountdown()
+    stopBleScan()
     if (sid) { try { await fetch('/api/cleanupSessionPhotos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sid }) }) } catch {} }
     sessionIdRef.current = null
     setSessionId(null)
@@ -577,6 +724,65 @@ export default function TeacherSession({ onLogout }: Props) {
                   </div>
                   <button className="btn-white-ghost" onClick={stopPingCountdown} style={{ width: '100%', borderRadius: 10 }}>■ Stop Ping</button>
                 </>
+              )}
+            </div>
+
+            <div className="ping-card">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>📶 BLE Attendance</div>
+                {bleScanning && (
+                  <div className="live-badge"><div className="live-dot" />SCANNING {bleCountdown}s</div>
+                )}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
+                Auto-marks approved students whose phones advertise over Bluetooth. The challenge rotates every 30 seconds to prevent replay attacks.
+              </div>
+
+              {!bleScanning ? (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn-primary" onClick={startBleScan} style={{ flex: 1 }}>▶ Start BLE Scan</button>
+                  <button className="btn-primary" onClick={syncNow} disabled={syncBusy} style={{ flex: 1, background: 'var(--off)', color: 'var(--text)', border: '1px solid var(--border)', opacity: syncBusy ? 0.6 : 1 }}>
+                    {syncBusy ? 'Syncing…' : `🔄 Sync Offline (${bleQueueCount})`}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn-white-ghost" onClick={stopBleScan} style={{ flex: 1 }}>■ Stop BLE Scan</button>
+                  <button className="btn-white-ghost" onClick={() => restartTeacherScan().catch(() => {})} style={{ flex: 1 }}>↻ New Challenge</button>
+                </div>
+              )}
+
+              {bleError && <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: 'var(--red)', background: 'var(--red-lt)', padding: '8px 12px', borderRadius: 8 }}>{bleError}</div>}
+
+              {bleRoster.length > 0 && (
+                <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                  <select
+                    value={manualStudentId}
+                    onChange={e => setManualStudentId(e.target.value)}
+                    style={{ flex: 1, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)', fontSize: 12, fontFamily: 'Inter,sans-serif' }}
+                  >
+                    <option value="">Manual mark…</option>
+                    {bleManualList.map(s => (
+                      <option key={s.studentId} value={s.studentId}>{s.studentName}{s.section ? ` (${s.section})` : ''}</option>
+                    ))}
+                  </select>
+                  <button className="btn-primary" onClick={handleManualMark} disabled={!manualStudentId || manualMarking} style={{ padding: '0 16px', opacity: !manualStudentId || manualMarking ? 0.6 : 1 }}>
+                    {manualMarking ? '…' : 'Mark'}
+                  </button>
+                </div>
+              )}
+
+              {bleStatuses.length > 0 && (
+                <div style={{ marginTop: 12, maxHeight: 180, overflowY: 'auto', background: 'var(--off)', borderRadius: 10, padding: 6 }}>
+                  {bleStatuses.slice(-15).map((s, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', fontSize: 12 }}>
+                      <span style={{ color: s.kind === 'ok' ? 'var(--green2)' : 'var(--red)', fontWeight: 700 }}>{s.kind === 'ok' ? '✓' : '✖'}</span>
+                      <span style={{ fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</span>
+                      {s.section && <span className="section-badge">{s.section}</span>}
+                      <span style={{ color: 'var(--muted)', marginLeft: 'auto' }}>{s.text} · {s.at}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
 
