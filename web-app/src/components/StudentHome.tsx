@@ -3,9 +3,10 @@ import React from 'react'
 interface Props {
   onRegister: () => void
   onScan: () => void
+  onBack?: () => void  // optional — hidden when accessed via /students on web
 }
 
-export default function StudentHome({ onRegister, onScan }: Props) {
+export default function StudentHome({ onRegister, onScan, onBack }: Props) {
   return (
     <>
       <div className="home-bg" />
@@ -30,13 +31,24 @@ export default function StudentHome({ onRegister, onScan }: Props) {
           >
             📱 Register My Device
           </button>
+          {onBack && (
+            <button
+              className="btn-primary"
+              onClick={onBack}
+              style={{ marginTop: 12, background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}
+            >
+              ← Back
+            </button>
+          )}
         </div>
-        <div style={{ marginTop: 32, color: 'rgba(255,255,255,0.3)', fontSize: 12, textAlign: 'center' }}>
-          Teacher?{' '}
-          <a href="/" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'underline' }}>
-            Go to teacher login
-          </a>
-        </div>
+        {!onBack && (
+          <div style={{ marginTop: 32, color: 'rgba(255,255,255,0.3)', fontSize: 12, textAlign: 'center' }}>
+            Teacher?{' '}
+            <a href="/" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'underline' }}>
+              Go to teacher login
+            </a>
+          </div>
+        )}
       </div>
     </>
   )

@@ -1,18 +1,11 @@
 import React from 'react'
 
 interface Props {
-  onSelectRole: (role: 'teacher') => void
+  onSelectTeacher: () => void
+  onSelectStudent: () => void
 }
 
-const TeacherIcon = (
-  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24">
-    <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2">
-      <path d="M2 3h20m-1 0v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3m4 18l5-5l5 5" />
-    </g>
-  </svg>
-)
-
-export default function HomeScreen({ onSelectRole }: Props) {
+export default function HomeScreen({ onSelectTeacher, onSelectStudent }: Props) {
   return (
     <>
       <div className="home-bg" />
@@ -25,7 +18,16 @@ export default function HomeScreen({ onSelectRole }: Props) {
         <div className="home-title">Attendance<br />Scanner</div>
         <div className="home-sub">Scan your QR code to log attendance instantly. Built for students and teachers at ACLC Ormoc.</div>
         <div className="home-btns">
-          <button className="btn-primary" onClick={() => onSelectRole('teacher')}>{TeacherIcon} I'm a Teacher</button>
+          <button className="btn-primary" onClick={onSelectStudent}>
+            🎓 I'm a Student
+          </button>
+          <button
+            className="btn-primary"
+            onClick={onSelectTeacher}
+            style={{ marginTop: 12, background: 'rgba(255,255,255,0.12)', border: '1.5px solid rgba(255,255,255,0.3)' }}
+          >
+            🔐 I'm a Teacher
+          </button>
         </div>
       </div>
     </>
