@@ -3,7 +3,6 @@ import HomeScreen from './components/HomeScreen'
 import StudentHome from './components/StudentHome'
 import PINGate from './components/PINGate'
 import StudentScanner from './components/StudentScanner'
-import StudentBLE from './components/StudentBLE'
 import RegisterDevice from './components/RegisterDevice'
 import TeacherLogin from './components/TeacherLogin'
 import TeacherSession from './components/TeacherSession'
@@ -11,66 +10,77 @@ import TeacherSession from './components/TeacherSession'
 import { supabase } from './services/supabase'
 import './App.css'
 
-type TeacherPhase = 'home' | 'teacher-login' | 'teacher'
-type StudentPhase = 'home' | 'pin' | 'scanner' | 'ble' | 'register'
+type Phase = 'home' | 'student-home' | 'pin' | 'scanner' | 'register' | 'teacher-login' | 'teacher'
 
-function isStudentsPath() {
-  return window.location.pathname.startsWith('/students')
-}
+const IS_STUDENTS_ROUTE = window.location.pathname.startsWith('/students')
 
 export default function App() {
-  const [teacherPhase, setTeacherPhase] = useState<TeacherPhase>('home')
-  const [studentPhase, setStudentPhase] = useState<StudentPhase>('home')
+  const [phase, setPhase] = useState<Phase>(IS_STUDENTS_ROUTE ? 'student-home' : 'home')
   const [pinValue, setPinValue] = useState('')
   const [navCount, setNavCount] = useState(0)
 
-  const isStudents = isStudentsPath()
-
   useEffect(() => {
+    if (IS_STUDENTS_ROUTE) return // students route never auto-navigates to teacher
     supabase().auth.getSession().then(({ data: { session } }) => {
-      if (session) setTeacherPhase('teacher')
+      if (session) setPhase('teacher')
     }).catch(() => {})
   }, [])
 
-  function goTeacher(id: TeacherPhase) { setNavCount(c => c + 1); setTeacherPhase(id); window.scrollTo(0, 0) }
-  function goStudent(id: StudentPhase) { setNavCount(c => c + 1); setStudentPhase(id); window.scrollTo(0, 0) }
+  function go(id: Phase) { setNavCount(c => c + 1); setPhase(id); window.scrollTo(0, 0) }
+
   async function handleSelectRole() {
     const { data: { session } } = await supabase().auth.getSession()
-    goTeacher(session ? 'teacher' : 'teacher-login')
+    go(session ? 'teacher' : 'teacher-login')
   }
 
-  if (isStudents) {
-    return (
-      <div className="app">
-        <div className={`screen ${studentPhase === 'home' ? 'active' : ''}`} id="students">
-          <StudentHome onStudent={() => goStudent('pin')} onRegister={() => goStudent('register')} onTeacher={handleSelectRole} />
-        </div>
-        <div className={`screen ${studentPhase === 'pin' ? 'active' : ''}`} id="pin">
-          <PINGate key={navCount} onSuccess={(pin) => { setPinValue(pin); goStudent('scanner') }} onBack={() => goStudent('home')} />
-        </div>
-        <div className={`screen ${studentPhase === 'register' ? 'active' : ''}`} id="register">
-          <RegisterDevice key={navCount} onBack={() => goStudent('home')} />
-        </div>
-        <div className={`screen ${studentPhase === 'scanner' ? 'active' : ''}`} id="scanner">
-          <StudentScanner key={navCount} onBack={() => goStudent('home')} onBle={() => goStudent('ble')} pinValue={pinValue} />
-        </div>
-        <div className={`screen ${studentPhase === 'ble' ? 'active' : ''}`} id="ble">
-          <StudentBLE key={navCount} onBack={() => goStudent('home')} pinValue={pinValue} />
-        </div>
-      </div>
-    )
-  }
+  const studentHome = IS_STUDENTS_ROUTE ? 'student-home' : 'home'
 
   return (
     <div className="app">
-      <div className={`screen ${teacherPhase === 'home' ? 'active' : ''}`} id="home">
-        <HomeScreen onSelectRole={handleSelectRole} />
+      {/* Teacher home — only shown on / */}
+      {!IS_STUDENTS_ROUTE && (
+        <div className={`screen ${phase === 'home' ? 'active' : ''}`} id="home">
+          <HomeScreen onSelectRole={handleSelectRole} />
+        </div>
+      )}
+
+      {/* Student home — only shown on /students */}
+      {IS_STUDENTS_ROUTE && (
+        <div className={`screen ${phase === 'student-home' ? 'active' : ''}`} id="student-home">
+          <StudentHome
+            onScan={() => go('pin')}
+            onRegister={() => go('register')}
+          />
+        </div>
+      )}
+
+      {/* Register device */}
+      <div className={`screen ${phase === 'register' ? 'active' : ''}`} id="register">
+        <RegisterDevice
+          key={navCount}
+          onBack={() => go(studentHome)}
+          onRegistered={(pin) => { setPinValue(pin); go('scanner') }}
+        />
       </div>
-      <div className={`screen ${teacherPhase === 'teacher-login' ? 'active' : ''}`} id="teacher-login">
-        <TeacherLogin onLogin={() => goTeacher('teacher')} onBack={() => goTeacher('home')} />
+
+      {/* PIN gate */}
+      <div className={`screen ${phase === 'pin' ? 'active' : ''}`} id="pin">
+        <PINGate key={navCount} onSuccess={(pin) => { setPinValue(pin); go('scanner') }} onBack={() => go(studentHome)} />
       </div>
-      <div className={`screen ${teacherPhase === 'teacher' ? 'active' : ''}`} id="teacher-dash">
-        <TeacherSession onLogout={() => goTeacher('home')} />
+
+      {/* QR Scanner */}
+      <div className={`screen ${phase === 'scanner' ? 'active' : ''}`} id="scanner">
+        <StudentScanner key={navCount} onBack={() => go(studentHome)} pinValue={pinValue} onProximity={() => go(studentHome)} />
+      </div>
+
+      {/* Teacher login */}
+      <div className={`screen ${phase === 'teacher-login' ? 'active' : ''}`} id="teacher-login">
+        <TeacherLogin onLogin={() => go('teacher')} onBack={() => go('home')} />
+      </div>
+
+      {/* Teacher dashboard */}
+      <div className={`screen ${phase === 'teacher' ? 'active' : ''}`} id="teacher-dash">
+        <TeacherSession onLogout={() => go('home')} />
       </div>
     </div>
   )
